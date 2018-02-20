@@ -1,0 +1,31 @@
+
+SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", ACTION=="add",    GOTO="begin_add"
+SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", ACTION=="remove", GOTO="begin_remove"
+GOTO="end"
+
+LABEL="begin_add"
+  SYMLINK+="usbhd-%k", GROUP="root"
+  ENV{ID_FS_LABEL_ENC}="usbhd-%k"
+  IMPORT{program}="/sbin/blkid -o udev -p $tempnode"
+  ENV{ID_FS_LABEL_ENC}=="USB-Movies*", GOTO="rips_begin"
+  ENV{ID_FS_LABEL_ENC}=="Movies*", GOTO="rips_begin"
+  GOTO="end"
+
+LABEL="rips_begin"
+  ENV{MOUNT_DIR}="/myth/video/$env{ID_FS_LABEL_ENC}"
+  RUN+="/bin/mkdir -p $env{MOUNT_DIR}"
+  RUN+="/bin/mount -t auto -o ro,noauto,async,noexec,nodev,noatime /dev/%k $env{MOUNT_DIR}"
+  RUN+="/usr/bin/df -h"
+  RUN+="/bin/su mythtv -c '/usr/bin/python /usr/local/bin/mythadder.py'"
+  GOTO="end"
+
+LABEL="begin_remove"
+  ENV{ID_FS_LABEL_ENC}=="USB-Movies*", GOTO="rips_unmount"
+  ENV{ID_FS_LABEL_ENC}=="Movies*", GOTO="rips_unmount"
+  GOTO="end"
+
+LABEL="rips_unmount"
+  RUN+="/bin/su mythtv -c '/usr/bin/python /usr/local/bin/mythadder.py'"
+  RUN+="/bin/umount -l $env{MOUNT_DIR}"
+  RUN+="/bin/rmdir $env{MOUNT_DIR}"
+LABEL="end"
