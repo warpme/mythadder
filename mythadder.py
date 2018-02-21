@@ -46,6 +46,7 @@ mountWait  = 5
 # Don't change anything below this unless you are a real python programmer and I've done something really dumb.
 # This is my python 'hello world', so be gentle.
 
+version = "1.0.1"
 MASCHEMA = "1030"
 
 #
@@ -160,7 +161,7 @@ uuid   = os.environ.get('ID_FS_UUID',False)
 label  = os.environ.get('ID_FS_LABEL',False)
 
 if device:
-    LOG("mythadder.py v1.0 by Wagnerrp, Piotr Oniszczuk\n\n -Device      : %s\n -Action      : %s\n -DeviceLabel : %s\n -DeviceUUID  : %s\n" % (device, action, label, uuid))
+    LOG("mythadder.py v%s by Wagnerrp, Piotr Oniszczuk\n\n -Device      : %s\n -Action      : %s\n -DeviceLabel : %s\n -DeviceUUID  : %s\n" % (version, device, action, label, uuid))
 
     #
     # the drive is connected
@@ -188,6 +189,10 @@ if device:
         cursor.execute("""SELECT extension FROM videotypes WHERE f_ignore=0""")
         extensions = zip(*cursor.fetchall())[0]
 
+        cursor.execute("""SELECT dirname FROM storagegroup  WHERE groupname='Videos'""")
+        row = zip(*cursor.fetchall())[0]
+        videoSGpath = str(row[0])
+
         for directory in os.walk(mount_point):
             for file in directory[2]:
                 if file.rsplit('.',1)[1] in extensions:
@@ -195,7 +200,7 @@ if device:
                     thisHash = hashFile(thisFile)
                     thisTitle = os.path.splitext(file)[0]
                     thisInode = str(os.stat(thisFile).st_ino)
-                    thisMythSGPath = label + '/' + file
+                    thisMythSGPath = re.sub(videoSGpath,'',thisFile)
                     thisHost = subprocess.check_output(['hostname'])
                     thisHost = thisHost.rstrip()
 
@@ -231,7 +236,7 @@ if device:
 				partitionlabel = %s
 				,filename = %s;"""
                     try:
-                        LOG("Inserting into REMOVABLEVIDEOS table record with:\n -Disk UUID   : " + uuid +'\n -Disk Label  : '+label+'\n -File Inode  : '+thisInode+'\n -Movie Title : '+thisTitle+'\n -File Path   : '+thisFile+'\n -File(in SG) : '+thisMythSGPath+'\n -File Hash   : '+thisHash+'\n')
+                        LOG("Inserting into REMOVABLEVIDEOS table record with:\n -Disk UUID   : " + uuid +'\n -Disk Label  : '+label+'\n -File Inode  : '+thisInode+'\n -Movie Title : '+thisTitle+'\n -File Path   : '+thisFile+'\n -File(in SG) : '+thisMythSGPath+'\n -VideoSG path: '+videoSGpath+'\n -File Hash   : '+thisHash+'\n')
                         cursor.execute(sql, (uuid, label,  thisInode,  thisTitle,  thisMythSGPath,  thisHash,  thisHost,  label,  thisMythSGPath))
                     except Exception, e:
                         LOG(e.args[0])
