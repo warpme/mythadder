@@ -1,0 +1,27 @@
+#!/bin/sh
+
+archive_name="USB-Movies1"
+
+
+
+
+
+
+#--------------------------------------
+
+logger -st "media-automount" "script ${archive_name}.mount.script started"
+
+/usr/bin/perl /usr/local/bin/osd_notify.pl ${archive_name} connected movies
+
+export `blkid --output export $1`
+export ACTION="add"
+export MYTHCONFDIR="/home/mythtv/.mythtv"
+/bin/su mythtv -p -c "/usr/bin/python3 /usr/local/bin/mythadder.py > /var/log/mythadder-add.log 2>&1"
+
+/bin/su mythtv -c "/usr/bin/mythutil --clearcache"
+
+/usr/bin/perl /usr/local/bin/osd_notify.pl ${archive_name} avaliable movies
+
+logger -st "media-automount" "script ${archive_name}.mount.script ended"
+
+exit 0

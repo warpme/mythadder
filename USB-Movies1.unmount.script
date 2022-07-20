@@ -1,0 +1,25 @@
+#!/bin/sh
+
+archive_name="USB-Movies1"
+
+
+
+
+
+
+#---------------------------------------------
+
+logger -st "media-automount" "script ${archive_name}.unmount.script started"
+
+export DEVNAME="$1"
+export ACTION="remove"
+export MYTHCONFDIR="/home/mythtv/.mythtv"
+/bin/su mythtv -p -c "/usr/bin/python3 /usr/local/bin/mythadder.py > /var/log/mythadder-remove.log 2>&1"
+
+/bin/su mythtv -c "/usr/bin/mythutil --clearcache"
+
+/usr/bin/perl /usr/local/bin/osd_notify.pl ${archive_name} disconnected movies
+
+logger -st "media-automount" "script ${archive_name}.unmount.script ended"
+
+exit 0
