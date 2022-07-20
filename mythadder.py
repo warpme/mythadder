@@ -1,40 +1,33 @@
-#!/usr/bin/python
-# mythadder - automatically add video files on removable media to the mythvideo database upon connect/mount
-# and remove them on disconnect.  Your distro should be set up to automount usb storage within 'mountWait' seconds after
-# connection into subdir=disk label within video SG directory. I.e. you have myth video SG in '/myth/video' dir and USB
-# disk labelled 'USB-Movies1'. Your distro should mount USB disk into '/myth/video/USB-Movies1'.
-# best way to achieve this will be use appropriate UDEV rule i.e. like this:
+#!/usr/bin/python3
+
+# mythadder - automatically add video files on removable media to the mythvideo database upon connect
+# and remove them on disconnect.  
 #
-#SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", ACTION=="add",    GOTO="begin_add"
-#SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", ACTION=="remove", GOTO="begin_remove"
-#GOTO="end"
+# Your distro should be set up to automount usb storage within 'mountWait' seconds after
+# connection into subdir=<disk label> within video SG directory. I.e. you have myth video SG in '/myth/video' dir and USB
+# disk labelled 'USB-Movies1' then your distro should mount USB disk into '/myth/video/USB-Movies1'.
 #
-#LABEL="begin_add"
-#  SYMLINK+="usbhd-%k", GROUP="root"
-#  ENV{ID_FS_LABEL_ENC}="usbhd-%k"
-#  IMPORT{program}="/sbin/blkid -o udev -p $tempnode"
-#  ENV{ID_FS_LABEL_ENC}=="USB-Movies*", GOTO="rips_begin"
-#GOTO="end"
+# Probably best idea is to:
+# 1.use udev rule to start mount script at usb add/remove
+# 2.mount sript should mount usb drive at proper location and within <label> dir
+# 3.call this script to make usb videos visible in mythtv
+# Step3 can be by script like below called with parameter as kernel device representing usb drive (i.e. /dev/sde1)
+#   export `blkid --output export $1`
+#   export ACTION="add"
+#   export MYTHCONFDIR="/home/mythtv/.mythtv"
+#   /bin/su mythtv -p -c "/usr/bin/python3 /usr/local/bin/mythadder.py > /var/log/mythadder-add.log 2>&1"
+#   /bin/su mythtv -c "/usr/bin/mythutil --clearcache"
 #
-#LABEL="rips_begin"
-#  ENV{MOUNT_DIR}="/myth/video/$env{ID_FS_LABEL_ENC}"
-#  RUN+="/bin/mkdir -p $env{MOUNT_DIR}"
-#  RUN+="/bin/mount -t auto -o ro,noauto,async,noexec,nodev,noatime /dev/%k $env{MOUNT_DIR}"
-#  RUN+="/usr/bin/df -h"
-#  RUN+="/bin/su mythtv -c '/usr/bin/python /usr/local/bin/mythadder.py'"
-#  GOTO="end"
+# When usb is removed - You may call script with parameter as kernel device representing usb drive (i.e. /dev/sde1):
+#   export `blkid --output export $1`
+#   export ACTION="remove"
+#   export MYTHCONFDIR="/home/mythtv/.mythtv"
+#   /bin/su mythtv -p -c "/usr/bin/python3 /usr/local/bin/mythadder.py > /var/log/mythadder-remove.log 2>&1"
+#   /bin/su mythtv -c "/usr/bin/mythutil --clearcache"
 #
-#LABEL="begin_remove"
-#  ENV{ID_FS_LABEL_ENC}=="USB-Movies*", GOTO="rips_unmount"
-#  GOTO="end"
-#
-#LABEL="rips_unmount"
-#  RUN+="/bin/su mythtv -c '/usr/bin/python /usr/local/bin/mythadder.py'"
-#  RUN+="/bin/umount -l $env{MOUNT_DIR}"
-#
-#LABEL="end"
-#
-#
+# If you want to automate all this - you can use i.e. my media-automout tool
+
+
 
 #
 # configuration section
@@ -46,7 +39,7 @@ mountWait  = 5
 # Don't change anything below this unless you are a real python programmer and I've done something really dumb.
 # This is my python 'hello world', so be gentle.
 
-version = "1.0.1"
+version = "1.2.0"
 MASCHEMA = "1030"
 
 #
@@ -57,7 +50,6 @@ import os
 import sys
 import subprocess
 import struct
-import commands
 import re
 import time
 from MythTV import MythDB, MythLog, Video
@@ -135,13 +127,13 @@ def hashFile(filename):
         hash = filesize
         if filesize < 65536 * 2:    # Video file is too small
                return u''
-        for x in range(65536/bytesize):
+        for x in range(int(65536/bytesize)):
                 buffer = f.read(bytesize)
                 (l_value,)= struct.unpack(longlongformat, buffer)
                 hash += l_value
                 hash = hash & 0xFFFFFFFFFFFFFFFF #to remain as 64bit number
         f.seek(max(0,filesize-65536),0)
-        for x in range(65536/bytesize):
+        for x in range(int(65536/bytesize)):
                 buffer = f.read(bytesize)
                 (l_value,)= struct.unpack(longlongformat, buffer)
                 hash += l_value
@@ -157,8 +149,8 @@ inodes = []
 
 device = os.environ.get('DEVNAME',False)
 action = os.environ.get('ACTION',False)
-uuid   = os.environ.get('ID_FS_UUID',False)
-label  = os.environ.get('ID_FS_LABEL',False)
+uuid   = os.environ.get('UUID',False)
+label  = os.environ.get('LABEL',False)
 
 if device:
     LOG("mythadder.py v%s by Wagnerrp, Piotr Oniszczuk\n\n -Device      : %s\n -Action      : %s\n -DeviceLabel : %s\n -DeviceUUID  : %s\n" % (version, device, action, label, uuid))
@@ -172,25 +164,27 @@ if device:
             LOG("-->Connecting to MythTV DB\n")
             db = MythDB()
             prepTable(db)
-        except Exception, e:
+        except (Exception) as e:
             LOG(e.args[0])
+            LOG("-->Connectinon to MythTV DB failed!\n")
             sys.exit(1)
 
         cursor = db.cursor()
 
         regex = re.compile(device)
         time.sleep(mountWait) # wait a few seconds until the drive is mounted
-        mount_output = commands.getoutput('mount -v')
+        mount_output = subprocess.getoutput('mount -v')
         for line in mount_output.split('\n'):
             if regex.match(line):
                 mount_point = line.split(' type ')[0].split(' on ')[1]
                 LOG("Disk mounted at " + mount_point)
 
         cursor.execute("""SELECT extension FROM videotypes WHERE f_ignore=0""")
-        extensions = zip(*cursor.fetchall())[0]
+        extensions = list(zip(*cursor.fetchall()))[0]
 
         cursor.execute("""SELECT dirname FROM storagegroup  WHERE groupname='Videos'""")
-        row = zip(*cursor.fetchall())[0]
+        row = list(zip(*cursor.fetchall()))[0]
+
         videoSGpath = str(row[0])
 
         for directory in os.walk(mount_point):
@@ -238,7 +232,7 @@ if device:
                     try:
                         LOG("Inserting into REMOVABLEVIDEOS table record with:\n -Disk UUID   : " + uuid +'\n -Disk Label  : '+label+'\n -File Inode  : '+thisInode+'\n -Movie Title : '+thisTitle+'\n -File Path   : '+thisFile+'\n -File(in SG) : '+thisMythSGPath+'\n -VideoSG path: '+videoSGpath+'\n -File Hash   : '+thisHash+'\n')
                         cursor.execute(sql, (uuid, label,  thisInode,  thisTitle,  thisMythSGPath,  thisHash,  thisHost,  label,  thisMythSGPath))
-                    except Exception, e:
+                    except (Exception) as e:
                         LOG(e.args[0])
 
         inodeList = ','.join(inodes)
@@ -256,7 +250,7 @@ if device:
         try:
             LOG("-->Removing from REMOVABLEVIDEOS all records for files deleted on " + label + " disk\n")
             cursor.execute(sql)
-        except MySQLdb.Error, e:
+        except (MySQLdb.Error) as e:
             LOG(e.args[0])
 
         # insert anything from our table that already has an id from mythtv
@@ -341,7 +335,7 @@ if device:
         try:
             LOG("-->Insert all records from REMOVABLEVIDEO table into VIDEOMETADATA table\n")
             cursor.execute(sql, [uuid])
-        except Exception, e:
+        except (Exception) as e:
             LOG(e.args[0])
 
         # get all our rows that have never been in mythtv before so we can insert them one at a time and capture the resulting mythtv id
@@ -392,7 +386,7 @@ if device:
             LOG("-->Getting all movie records from REMOVABLEVIDEO table not yet seen by myth\n")
             cursor.execute(sql,  [uuid])
             data = cursor.fetchall()
-        except Exception, e:
+        except (Exception) as e:
             LOG(e.args[0])
 
         # insert one row from new videos and capture the id it gets assigned
@@ -439,7 +433,7 @@ if device:
             try:
                 LOG('-->Adding movie '+ row[0]+' into VIDEOMETADATA table\n')
                 cursor.execute(sql, [row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[15], row[16], row[17], row[18], row[19], row[20], row[21], row[22], row[23], row[24], row[25], row[26], row[27], row[28], row[29], row[30], row[31], row[32], row[33]])
-            except Exception, e:
+            except (Exception) as e:
                 LOG(e.args[0])
 
             cursor.nextset()
@@ -454,8 +448,10 @@ if device:
             try:
                 LOG("Updating intid=" + str(intid) + " for this movie\n")
                 cursor.execute(sql2, [intid,  uuid, row[34]])
-            except Exception, e:
+            except (Exception) as e:
                 LOG(e.args[0])
+
+        LOG("-->All done with success!\n Exiting ...\n")
 
     #
     # the drive is being removed.
@@ -466,7 +462,7 @@ if device:
             LOG("-->Connecting to MythTV DB\n")
             db = MythDB()
             prepTable(db)
-        except Exception, e:
+        except (Exception) as e:
             LOG(e.args[0])
 
         cursor = db.cursor()
@@ -512,11 +508,11 @@ if device:
 		,rv.contenttype = vm.contenttype
             WHERE
                 rv.intid = vm.intid AND
-                rv.partitionuuid = %s;"""
+                rv.partitionlabel = %s;"""
         try:
             LOG("-->Updating all metadata fields from VIDEOMETADATA in REMOVABLEVIDEO table\n")
-            cursor.execute(sql, [uuid])
-        except Exception, e:
+            cursor.execute(sql, [label])
+        except (Exception) as e:
             LOG(e.args[0])
 
         # and finally delete all the rows in mythtv that match rows in our table for the drive being removed
@@ -527,9 +523,11 @@ if device:
                 videometadata vm, removablevideos rv
             WHERE
                 rv.intid = vm.intid AND
-                rv.partitionuuid = %s;"""
+                rv.partitionlabel = %s;"""
         try:
             LOG("-->Remove all relevant movie records from VIDEOMETADAT table\n")
-            cursor.execute(sql, [uuid])
-        except MySQLdb.Error, e:
+            cursor.execute(sql, [label])
+        except (MySQLdb.Error) as e:
             LOG(e.args[0])
+
+        LOG("-->All done with success!\n Exiting ...\n")
